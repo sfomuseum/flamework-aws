@@ -1,16 +1,59 @@
 <?php
 
-	# WORK IN PROGRESS. EVERYTHING WILL CHANGE.
-	# Derived from https://github.com/avi-wish/aws4-signature-php
+	# This was originally derived from https://github.com/avi-wish/aws4-signature-php
 
 	# If you need to verify / sanity check things against a known-working implementation:
 	# https://github.com/aaronland/go-aws-auth?tab=readme-ov-file#aws-sign-request
 
-	function aws_signer_v4_execute_request($http_method, $uri, $region, $service, $access_key, $secret_key, $security_token="", $data){
+	function aws_signer_v4_execute_request($http_method, $uri, $region, $service, $creds, $data){
 
-		$headers = aws_signer_v4_headers($http_method, $uri, $region, $service, $access_key, $secret_key, $security_token);
+		$headers = aws_signer_v4_headers($http_method, $uri, $region, $service, $creds, $data);
 
-		switch (strtouppper($http_method)){
+		// START OF for reasons I do not understand
+		// there is something about using the lib_http methods (below) that makes AWS sad
+		// and return "403 Forbidden" errors. For the sake of expediency we are just going
+		// to call the native curl functions until I can figure out what is going on.
+		
+		$ch = curl_init();
+		
+		curl_setopt_array($ch, array(
+			CURLOPT_URL => $uri,
+			CURLOPT_RETURNTRANSFER => true,
+			CURLOPT_FOLLOWLOCATION => true,
+			CURLOPT_TIMEOUT => 30,
+			CURLOPT_POST => true,
+			CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
+			CURLOPT_CUSTOMREQUEST => $http_method,
+			CURLOPT_POSTFIELDS => $data,
+			CURLOPT_VERBOSE => 0,
+			CURLOPT_SSL_VERIFYHOST => 1,
+			CURLOPT_SSL_VERIFYPEER => 1,
+			CURLOPT_HEADER => false,
+			CURLINFO_HEADER_OUT=>true,
+			CURLOPT_HTTPHEADER => $headers,
+		));
+
+		$rsp = curl_exec($ch);		
+		$rsp_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+		curl_close($ch);
+		
+		if (($rsp_code >= 200) && ($rsp_code <= 299)){
+			return array("ok" => 1, "body" => $rsp);
+		}
+
+		$err = curl_error($ch);
+
+		if ($err != ""){
+			$rsp = $err;
+		}
+		
+		return array("ok" => 0, "error" => $rsp);
+
+		// END OF for reasons I do not understand
+		
+		/*	
+		switch (strtoupper($http_method)){
 		case "GET":
 			return http_get($uri, $headers);
 			break;
@@ -27,15 +70,18 @@
 			return array("ok" => 0, "error" => "Unsupported method");
 			break;
 		}
+		*/
 	}
 
-	// function aws_signer_v4_headers($host, $uri, $requestUrl, $accessKey, $secretKey, $securityToken, $region, $service, $httpRequestMethod, $data, $debug = FALSE){
-	
-	function aws_signer_v4_headers($http_method, $uri, $region, $service, $access_key, $secret_key, $security_token, $debug=FALSE){
+	function aws_signer_v4_headers($http_method, $uri, $region, $service, $creds, $data, $debug=FALSE){
 
 		$host = parse_url($uri, PHP_URL_HOST);
 		$path = parse_url($uri, PHP_URL_PATH);
 		$query = parse_url($uri, PHP_URL_QUERY);
+
+		$access_key = $creds["access_key"];
+		$secret_key = $creds["secret_key"];
+		$security_token = $creds["security_token"];
 		
 		$headers_to_sign = array(
 			"content-length",
@@ -58,7 +104,7 @@
 		$dt = new DateTime('UTC');
 		$req_date = $dt->format('Ymd');
 		$req_datetime = $dt->format('Ymd\THis\Z');
-
+		
 		// Create signing key
 		$k_secret = $secret_key;
 		$k_date = hash_hmac($php_algorithm, $req_date, "AWS4{$k_secret}", true);	
@@ -100,20 +146,20 @@
 		}
 
 		$canonical_request_hashed = strtolower(bin2hex(hash($php_algorithm, $canonical_request_str, true)));
-	
+
 		// Create scope
 		$credential_scope = array();
 		$credential_scope[] = $req_date;
 		$credential_scope[] = $region;
 		$credential_scope[] = $service;
 		$credential_scope[] = $termination_string;
-		$credential_scopeStr = implode('/', $credential_scope);
+		$credential_scope_str = implode('/', $credential_scope);
 
 		// Create string to signing
 		$to_sign = array();
 		$to_sign[] = $algorithm;
 		$to_sign[] = $req_datetime;
-		$to_sign[] = $credential_scopeStr;
+		$to_sign[] = $credential_scope_str;
 		$to_sign[] = $canonical_request_hashed;
 		$to_sign_str = implode("\n", $to_sign);
 	
@@ -130,7 +176,7 @@
 
 		// Create authorization header
 		$auth_header = array();
-		$auth_header[] = 'Credential=' . $access_key . '/' . $credential_scopeStr;
+		$auth_header[] = 'Credential=' . $access_key . '/' . $credential_scope_str;
 		$auth_header[] = 'SignedHeaders=' . $signed_headers;
 		$auth_header[] = 'Signature=' . ($signature);
 		$auth_header_str = $algorithm . ' ' . implode(', ', $auth_header);
