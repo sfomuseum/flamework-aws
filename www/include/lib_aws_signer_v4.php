@@ -5,182 +5,148 @@
 
 	# If you need to verify / sanity check things against a known-working implementation:
 	# https://github.com/aaronland/go-aws-auth?tab=readme-ov-file#aws-sign-request
-	
-	function aws_signer_v4_headers($host, $uri, $requestUrl, $accessKey, $secretKey, $securityToken, $region, $service, $httpRequestMethod, $data, $debug = TRUE){
 
-	$headers_to_sign = array(
-		"content-length",
-		"content-type",
-		"host",
-		"x-amz-date",
-	);
+	function aws_signer_v4_execute_request($http_method, $uri, $region, $service, $access_key, $secret_key, $security_token="", $data){
 
-	if ($securityToken != ""){
-		$headers_to_sign[] = "x-amz-security-token";
-	}
-	
-	$terminationString	= 'aws4_request';
-	$algorithm 		= 'AWS4-HMAC-SHA256';
-	$phpAlgorithm 		= 'sha256';
-	$canonicalURI		= $uri;
-	$canonicalQueryString	= '';
-	$signedHeaders		= implode(";", $headers_to_sign);
+		$headers = aws_signer_v4_headers($http_method, $uri, $region, $service, $access_key, $secret_key, $security_token);
 
-	$currentDateTime = new DateTime('UTC');
-	$reqDate = $currentDateTime->format('Ymd');
-	$reqDateTime = $currentDateTime->format('Ymd\THis\Z');
-
-	// Create signing key
-	$kSecret = $secretKey;
-	$kDate = hash_hmac($phpAlgorithm, $reqDate, "AWS4{$kSecret}", true);	
-	$kRegion = hash_hmac($phpAlgorithm, $region, $kDate, true);
-	$kService = hash_hmac($phpAlgorithm, $service, $kRegion, true);
-	$kSigning = hash_hmac($phpAlgorithm, $terminationString, $kService, true);
-
-	// Create canonical headers
-	$canonicalHeaders = array();
-	$canonicalHeaders[] = 'content-length:' . strlen($data);
-	$canonicalHeaders[] = 'content-type:application/json';		
-	$canonicalHeaders[] = 'host:' . $host;
-	$canonicalHeaders[] = 'x-amz-date:' . $reqDateTime;
-
-	if ($securityToken != ""){
-		$canonicalHeaders[] = 'x-amz-security-token:' . $securityToken;
-	}
-	
-	$canonicalHeadersStr = implode("\n", $canonicalHeaders);
-
-	// Create request payload
-	$requestHashedPayload = strtolower(bin2hex(hash($phpAlgorithm, $data, true)));
-
-	// Create canonical request
-	$canonicalRequest = array();
-	$canonicalRequest[] = $httpRequestMethod;
-	$canonicalRequest[] = $canonicalURI;
-	$canonicalRequest[] = $canonicalQueryString;
-	$canonicalRequest[] = $canonicalHeadersStr . "\n";
-	$canonicalRequest[] = $signedHeaders;
-	$canonicalRequest[] = $requestHashedPayload;
-	$requestCanonicalRequest = implode("\n", $canonicalRequest);
-
-	if ($debug){
-		echo "[CANONICAL STRING]\n";
-		echo "---\n";
-		echo "{$requestCanonicalRequest}\n";
-		echo "---\n";
+		switch (strtouppper($http_method)){
+		case "GET":
+			return http_get($uri, $headers);
+			break;
+		case "POST":
+			return http_post($uri, $data, $headers);
+			break;
+		case "PUT":
+			return http_put($uri, $data, $headers);
+			break;
+		case "PUT":
+			return http_put($uri, $data, $headers);
+			break;
+		default:
+			return array("ok" => 0, "error" => "Unsupported method");
+			break;
+		}
 	}
 
-	$requestHashedCanonicalRequest = strtolower(bin2hex(hash($phpAlgorithm, $requestCanonicalRequest, true)));
+	// function aws_signer_v4_headers($host, $uri, $requestUrl, $accessKey, $secretKey, $securityToken, $region, $service, $httpRequestMethod, $data, $debug = FALSE){
 	
-	// Create scope
-	$credentialScope = array();
-	$credentialScope[] = $reqDate;
-	$credentialScope[] = $region;
-	$credentialScope[] = $service;
-	$credentialScope[] = $terminationString;
-	$credentialScopeStr = implode('/', $credentialScope);
+	function aws_signer_v4_headers($http_method, $uri, $region, $service, $access_key, $secret_key, $security_token, $debug=FALSE){
 
-	// Create string to signing
-	$stringToSign = array();
-	$stringToSign[] = $algorithm;
-	$stringToSign[] = $reqDateTime;
-	$stringToSign[] = $credentialScopeStr;
-	$stringToSign[] = $requestHashedCanonicalRequest;
-	$stringToSignStr = implode("\n", $stringToSign);
+		$host = parse_url($uri, PHP_URL_HOST);
+		$path = parse_url($uri, PHP_URL_PATH);
+		$query = parse_url($uri, PHP_URL_QUERY);
+		
+		$headers_to_sign = array(
+			"content-length",
+			"content-type",
+			"host",
+			"x-amz-date",
+		);
+
+		if ($security_token != ""){
+			$headers_to_sign[] = "x-amz-security-token";
+		}
 	
-	if($debug){
-		echo "[STRING TO SIGN]\n";
-		echo "---\n";
-		echo "{$stringToSignStr}\n";
-		echo "---\n";
-	}
+		$termination_string	= 'aws4_request';
+		$algorithm 		= 'AWS4-HMAC-SHA256';
+		$php_algorithm 		= 'sha256';
+		$canonical_uri		= $path;	// $uri;
+		$canonical_query_string	= $query;	// '';
+		$signed_headers		= implode(";", $headers_to_sign);
 
-	// Create signature
+		$dt = new DateTime('UTC');
+		$req_date = $dt->format('Ymd');
+		$req_datetime = $dt->format('Ymd\THis\Z');
+
+		// Create signing key
+		$k_secret = $secret_key;
+		$k_date = hash_hmac($php_algorithm, $req_date, "AWS4{$k_secret}", true);	
+		$k_region = hash_hmac($php_algorithm, $region, $k_date, true);
+		$k_service = hash_hmac($php_algorithm, $service, $k_region, true);
+		$k_signing = hash_hmac($php_algorithm, $termination_string, $k_service, true);
+
+		// Create canonical headers
+		$canonical_headers = array();
+		$canonical_headers[] = 'content-length:' . strlen($data);
+		$canonical_headers[] = 'content-type:application/json';		
+		$canonical_headers[] = 'host:' . $host;
+		$canonical_headers[] = 'x-amz-date:' . $req_datetime;
+
+		if ($security_token != ""){
+			$canonical_headers[] = 'x-amz-security-token:' . $security_token;
+		}
 	
-	$signature = hash_hmac($phpAlgorithm, $stringToSignStr, $kSigning);
+		$canonical_headers_str = implode("\n", $canonical_headers);
 
-	// Create authorization header
-	$authorizationHeader = array();
-	$authorizationHeader[] = 'Credential=' . $accessKey . '/' . $credentialScopeStr;
-	$authorizationHeader[] = 'SignedHeaders=' . $signedHeaders;
-	$authorizationHeader[] = 'Signature=' . ($signature);
-	$authorizationHeaderStr = $algorithm . ' ' . implode(', ', $authorizationHeader);
+		// Create request payload
+		$req_payload_hashed = strtolower(bin2hex(hash($php_algorithm, $data, true)));
 
-	// Request headers
-	$headers = array();
-	$headers[] = 'accept:';
-	$headers[] = 'authorization: '.$authorizationHeaderStr;
-	$headers[] = 'content-length: '.strlen($data);
-	$headers[] = 'content-type: application/json';
-	$headers[] = 'host: ' . $host;
-	$headers[] = 'x-amz-date: ' . $reqDateTime;
+		// Create canonical request
+		$canonical_request = array();
+		$canonical_request[] = $http_method;
+		$canonical_request[] = $canonical_uri;
+		$canonical_request[] = $canonical_query_string;
+		$canonical_request[] = $canonical_headers_str . "\n";
+		$canonical_request[] = $signed_headers;
+		$canonical_request[] = $req_payload_hashed;
+		$canonical_request_str = implode("\n", $canonical_request);
 
-	if ($securityToken != ""){
-		$headers[] = 'x-amz-security-token: ' . $securityToken;
-	}
+		if ($debug){
+			echo "[CANONICAL STRING]\n";
+			echo "---\n";
+			echo "{$canonical_request_str}\n";
+			echo "---\n";
+		}
+
+		$canonical_request_hashed = strtolower(bin2hex(hash($php_algorithm, $canonical_request_str, true)));
 	
-	return $headers;
+		// Create scope
+		$credential_scope = array();
+		$credential_scope[] = $req_date;
+		$credential_scope[] = $region;
+		$credential_scope[] = $service;
+		$credential_scope[] = $termination_string;
+		$credential_scopeStr = implode('/', $credential_scope);
+
+		// Create string to signing
+		$to_sign = array();
+		$to_sign[] = $algorithm;
+		$to_sign[] = $req_datetime;
+		$to_sign[] = $credential_scopeStr;
+		$to_sign[] = $canonical_request_hashed;
+		$to_sign_str = implode("\n", $to_sign);
+	
+		if ($debug){
+			echo "[STRING TO SIGN]\n";
+			echo "---\n";
+			echo "{$to_sign_str}\n";
+			echo "---\n";
+		}
+
+		// Create signature
+	
+		$signature = hash_hmac($php_algorithm, $to_sign_str, $k_signing);
+
+		// Create authorization header
+		$auth_header = array();
+		$auth_header[] = 'Credential=' . $access_key . '/' . $credential_scopeStr;
+		$auth_header[] = 'SignedHeaders=' . $signed_headers;
+		$auth_header[] = 'Signature=' . ($signature);
+		$auth_header_str = $algorithm . ' ' . implode(', ', $auth_header);
+
+		// Request headers
+		$headers = array();
+		$headers[] = 'accept:';
+		$headers[] = 'authorization: '.$auth_header_str;
+		$headers[] = 'content-length: '.strlen($data);
+		$headers[] = 'content-type: application/json';
+		$headers[] = 'host: ' . $host;
+		$headers[] = 'x-amz-date: ' . $req_datetime;
+
+		if ($security_token != ""){
+			$headers[] = 'x-amz-security-token: ' . $security_token;
+		}
+	
+		return $headers;
 }
-
-/**
-* This function is in use
-* for send request with authorization header
-*/
-function callToAPI($requestUrl, $httpRequestMethod, $headers, $data, $debug=TRUE)
-{
-
-	// Execute the call
-	$curl = curl_init();
-	curl_setopt_array($curl, array(
-	  CURLOPT_URL => $requestUrl,
-	  CURLOPT_RETURNTRANSFER => true,
-	  CURLOPT_FOLLOWLOCATION => true,
-	  CURLOPT_TIMEOUT => 30,
-	  CURLOPT_POST => true,
-	  CURLOPT_HTTP_VERSION => CURL_HTTP_VERSION_1_1,
-	  CURLOPT_CUSTOMREQUEST => $httpRequestMethod,
-	  CURLOPT_POSTFIELDS => $data,
-	  CURLOPT_VERBOSE => 0,
-	  CURLOPT_SSL_VERIFYHOST => 0,
-	  CURLOPT_SSL_VERIFYPEER => 0,
-	  CURLOPT_HEADER => false,
-	  CURLINFO_HEADER_OUT=>true,
-	  CURLOPT_HTTPHEADER => $headers,
-	));
-
-	$response = curl_exec($curl);
-	$err = curl_error($curl);
-	$responseCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-
-	if($debug){
-		$headers = curl_getinfo($curl, CURLINFO_HEADER_OUT);
-		echo "[REQUEST]\n";
-		echo "---\n";
-		echo "{$headers}\n";
-		echo "---\n";
-	}
-
-	curl_close($curl);
-
-	if ($err) {
-		if($debug){
-			echo "<h5>Error:" . $responseCode . "</h5>";
-			echo "<pre>";
-			echo $err;
-			echo "</pre>";
-		}
-	} else {
-		if($debug){
-			echo "<h5>Response:" . $responseCode . "</h5>";
-			echo "<pre>";
-			echo $response;
-			echo "</pre>";
-		}
-	}
-	
-	return array(
-		"responseCode" => $responseCode,
-		"response" => $response,
-		"error" => $err
-	);
-}// End callToAPI
